@@ -49,6 +49,7 @@ func startServer(port string) error {
 	config := ssh.ServerConfig{
 		PasswordCallback:  authPassword,
 		PublicKeyCallback: authKey,
+		ServerVersion:     "SSH-2.0-OpenSSH_6.7p1 Debian-5",
 	}
 
 	// generate a new private key each startcso it looks like a new server.
