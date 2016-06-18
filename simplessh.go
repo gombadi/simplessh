@@ -31,31 +31,35 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// start the ssh server
-	err := startServer(port)
-	if err != nil {
-		log.Fatal("start ssh failed. err:\n", err)
-	}
+	errChan := make(chan error, 1)
+	go startServer(port, errChan)
 
 	// wait for signal then shut down
-	fmt.Printf("\nShutting down system on signal: %v\n", <-sigChan)
+	// The app will terminate on any channel activity so no for loop required
+	select {
+	case s := <-sigChan:
+		fmt.Printf("\nShutting down system on signal: %v\n", s)
+	case e := <-errChan:
+		fmt.Printf("\nShutting down system on error: %v\n", e)
+	}
+
 	os.Exit(0)
 }
 
-func startServer(port string) error {
+// startServer runs in a goroutine, configures the new server then listens for incoming connections
+func startServer(port string, errChan chan error) {
 
-	var err error
-
-	// start the ssh server listening and return ?
 	config := ssh.ServerConfig{
 		PasswordCallback:  authPassword,
 		PublicKeyCallback: authKey,
-		ServerVersion:     "SSH-2.0-OpenSSH_6.7p1 Debian-5",
+		ServerVersion:     "SSH-2.0-OpenSSH_6.7p1 Debian-5+deb8u1",
 	}
 
 	// generate a new private key each startcso it looks like a new server.
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return err
+		errChan <- err
+		return
 	}
 
 	privateKeyDer := x509.MarshalPKCS1PrivateKey(privateKey)
@@ -67,33 +71,28 @@ func startServer(port string) error {
 
 	hostPrivateKeySigner, err := ssh.ParsePrivateKey(pem.EncodeToMemory(&privateKeyBlock))
 	if err != nil {
-		return err
+		errChan <- err
+		return
 	}
 	config.AddHostKey(hostPrivateKeySigner)
 
 	socket, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		return err
+		errChan <- err
+		return
 	}
 
-	go listenForConn(socket, config)
-
-	return nil
-}
-
-// listenForConn runs in a goroutine to listen for incoming connections
-func listenForConn(socket net.Listener, config ssh.ServerConfig) {
-
-	dowhile := true
-	for dowhile == true {
+	for {
 		conn, err := socket.Accept()
 		if err != nil {
-			dowhile = false
-		} else {
-			// handle each incoming request in its own goroutine
-			go handleSSH(conn, config)
+			break
 		}
+		// handle each incoming request in its own goroutine
+		go handleSSH(conn, config)
 	}
+	// exit goroutine and advise the world
+	errChan <- err
+	return
 }
 
 // handleSSH runs in a goroutine and handles an incoming SSH connection
